@@ -9,11 +9,40 @@ class Database {
     this.pool = new Pool({
       connectionString: databaseUrl,
       ssl: { rejectUnauthorized: false },
-      max: 20,
-      idleTimeoutMillis: 30000
+      max: 5,
+      idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 10000
     });
 
-    this.initTables();
+    this.initialized = false;
+    this.initializing = null;
+  }
+
+  async initialize(retries = 3) {
+    if (this.initialized) return;
+    if (this.initializing) return this.initializing;
+    this.initializing = (async () => {
+      for (let attempt = 1; attempt <= retries; attempt++) {
+        try {
+          console.log('Tentativa ' + attempt + ' de inicializar banco de dados...');
+          await this.initTables();
+          this.initialized = true;
+          console.log('Banco de dados inicializado com sucesso');
+          return;
+        } catch (err) {
+          console.error('Erro na tentativa ' + attempt + ':', err.message);
+          if (attempt < retries) {
+            const delay = attempt * 2000;
+            console.log('Aguardando ' + delay + 'ms antes de tentar novamente...');
+            await new Promise(r => setTimeout(r, delay));
+          } else {
+            console.error('Falha ao inicializar banco apos todas tentativas');
+            throw err;
+          }
+        }
+      }
+    })();
+    return this.initializing;
   }
 
   async query(sql, params = []) {
@@ -184,7 +213,7 @@ class Database {
 
     const adminExists = await this.get('SELECT id FROM users WHERE email = $1', ['admin@prospecflow.com']);
     if (!adminExists) {
-      const hash = bcrypt.hashSync('admin123', 10);
+      const hash = await bcrypt.hash('admin123', 10);
       await this.query(
         'INSERT INTO users (email, password, name, company, role) VALUES ($1, $2, $3, $4, $5)',
         ['admin@prospecflow.com', hash, 'Administrador', 'ProspecFlow', 'admin']
